@@ -23,7 +23,7 @@ services:
       - key: BILLBUDDY_SESSION_SECRET
         sync: false
 
-    - type: web
+  - type: web
     name: billbuddy-dashboard
     runtime: static
     rootDir: frontend
