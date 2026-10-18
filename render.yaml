@@ -23,8 +23,9 @@ services:
       - key: BILLBUDDY_SESSION_SECRET
         sync: false
 
-  - type: static_site
+    - type: web
     name: billbuddy-dashboard
+    runtime: static
     rootDir: frontend
     buildCommand: npm ci && npm run build
     staticPublishPath: ./dist
