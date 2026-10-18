@@ -166,6 +166,20 @@ class DashboardLogin(BaseModel):
     password: str = Field(min_length=1, max_length=256)
 
 
+class BillDelete(BaseModel):
+    bill_id: int = Field(
+        gt=0,
+        strict=True,
+        description="Positive integer ID of the bill to delete.",
+    )
+
+    model_config = {
+        "json_schema_extra": {
+            "example": {"bill_id": 123},
+        }
+    }
+
+
 def serialize_bill(row):
     return {
         "id": row["id"],
@@ -339,20 +353,39 @@ def update_bill(
     return serialize_bill(row)
 
 
+def delete_bill_by_id(bill_id: int):
+    with connect_db() as db:
+        result = db.execute(
+            "DELETE FROM bills WHERE id = %s RETURNING id",
+            (bill_id,),
+        )
+        if result.fetchone() is None:
+            raise HTTPException(
+                status_code=404,
+                detail="Bill not found",
+            )
+
+    return {"message": "Bill deleted successfully"}
+
+
+@app.post(
+    "/bills/delete",
+    summary="Delete a bill (Bolna-compatible)",
+    description="Deletes the bill identified by the positive integer `bill_id` in the JSON body.",
+)
+def delete_bill_from_body(
+    request: BillDelete,
+    _: None = Depends(verify_api_key),
+):
+    return delete_bill_by_id(request.bill_id)
+
+
 @app.delete("/bills/{bill_id}")
 def delete_bill(
     bill_id: int,
     _: None = Depends(verify_api_key),
 ):
-    with connect_db() as db:
-        get_bill_or_404(db, bill_id)
-
-        db.execute(
-            "DELETE FROM bills WHERE id = %s",
-            (bill_id,),
-        )
-
-    return {"message": "Bill deleted successfully"}
+    return delete_bill_by_id(bill_id)
 
 
 @app.get("/summary")
