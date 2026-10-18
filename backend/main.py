@@ -8,7 +8,7 @@ from datetime import date
 
 from fastapi import Cookie, Depends, FastAPI, Header, HTTPException, Response
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 from psycopg import connect
 from psycopg.rows import dict_row
 
@@ -170,8 +170,26 @@ class BillDelete(BaseModel):
     bill_id: int = Field(
         gt=0,
         strict=True,
-        description="Positive integer ID of the bill to delete.",
+        description="Positive integer ID or decimal-digit string identifying the bill to delete.",
     )
+
+    @field_validator("bill_id", mode="before")
+    @classmethod
+    def normalize_bill_id(cls, value):
+        if isinstance(value, bool):
+            raise ValueError("bill_id must be a positive integer or decimal-digit string")
+
+        if isinstance(value, int):
+            bill_id = value
+        elif isinstance(value, str) and value.isascii() and value.isdigit():
+            bill_id = int(value)
+        else:
+            raise ValueError("bill_id must be a positive integer or decimal-digit string")
+
+        if bill_id <= 0:
+            raise ValueError("bill_id must be greater than zero")
+
+        return bill_id
 
     model_config = {
         "json_schema_extra": {
