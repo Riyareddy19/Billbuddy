@@ -396,14 +396,21 @@ useEffect(() => {
         { method: "POST" },
         csrfToken
       );
-      if (!response.ok) throw new Error("Could not sign out");
+      if (!response.ok) {
+        const result = await response.json().catch(() => ({}));
+        throw new Error(result.detail || "Could not sign out");
+      }
       setIsAuthenticated(false);
       setCsrfToken("");
       setVoiceCapability(null);
       setDashboardPassword("");
     } catch (error) {
       console.error("BillBuddy logout error:", error);
-      setNotice("Could not sign out. Please try again.");
+      setNotice(
+        error instanceof Error
+          ? error.message
+          : "Could not sign out. Please try again."
+      );
     }
   }
 

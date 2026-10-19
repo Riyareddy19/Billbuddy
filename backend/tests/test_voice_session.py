@@ -450,6 +450,52 @@ class VoiceSessionTests(unittest.TestCase):
 
         self.assertEqual(error.exception.status_code, 403)
 
+    def test_production_origin_is_accepted_when_configured(self):
+        production_origin = "https://billbuddy-api-32rq.onrender.com"
+        with patch.dict(
+            os.environ,
+            {
+                "BILLBUDDY_FRONTEND_ORIGINS":
+                    " https://other.example.com/ , " + production_origin + " "
+            },
+        ):
+            self.assertEqual(
+                main.frontend_origins(),
+                ["https://other.example.com", production_origin],
+            )
+            self.assertIsNone(
+                main.require_frontend_origin(
+                    make_request(headers={"origin": production_origin})
+                )
+            )
+
+    def test_production_origin_can_create_voice_session(self):
+        production_origin = "https://billbuddy-api-32rq.onrender.com"
+        with patch.dict(
+            os.environ,
+            {"BILLBUDDY_FRONTEND_ORIGINS": production_origin},
+        ):
+            token = main.issue_voice_capability(production_origin)
+            expected_session = main.BolnaWebCallSession.model_validate(self.session)
+            with patch.object(
+                main,
+                "mint_bolna_session",
+                return_value=expected_session,
+            ):
+                result = asyncio.run(
+                    main.create_voice_session(
+                        make_request(
+                            headers={
+                                "origin": production_origin,
+                                "content-type": "application/json",
+                            }
+                        ),
+                        authorization="Bear" + "er " + token,
+                    )
+                )
+
+        self.assertEqual(result, expected_session)
+
     def test_cookie_auth_mutation_requires_valid_session_bound_csrf_token(self):
         with (
             patch.dict(
@@ -568,6 +614,69 @@ class VoiceSessionTests(unittest.TestCase):
             )
 
         self.assertEqual(error.exception.status_code, 403)
+
+    def test_logout_clears_cookie_with_production_origin_and_valid_csrf(self):
+        production_origin = "https://billbuddy-api-32rq.onrender.com"
+        secret = "test-session-secret"
+        session = main.create_dashboard_session(
+            int(time.time()) + main.SESSION_MAX_AGE,
+            secret,
+        )
+        csrf_token = main.create_dashboard_csrf_token(session, secret)
+        response = main.Response()
+
+        with patch.dict(
+            os.environ,
+            {
+                "BILLBUDDY_FRONTEND_ORIGINS": production_origin,
+                "BILLBUDDY_SESSION_SECRET": secret,
+                "BILLBUDDY_COOKIE_SECURE": "true",
+                "BILLBUDDY_COOKIE_SAMESITE": "lax",
+            },
+        ):
+            result = main.dashboard_logout(
+                make_request(
+                    headers={
+                        "origin": production_origin,
+                        "x-billbuddy-csrf": csrf_token,
+                    }
+                ),
+                response,
+                billbuddy_session=session,
+            )
+
+        self.assertEqual(result, {"authenticated": False})
+        cookie = response.headers["set-cookie"].lower()
+        self.assertIn("max-age=0", cookie)
+        self.assertIn("httponly", cookie)
+        self.assertIn("secure", cookie)
+        self.assertIn("samesite=lax", cookie)
+
+    def test_logout_still_requires_csrf_for_authenticated_session(self):
+        production_origin = "https://billbuddy-api-32rq.onrender.com"
+        secret = "test-session-secret"
+        session = main.create_dashboard_session(
+            int(time.time()) + main.SESSION_MAX_AGE,
+            secret,
+        )
+        with (
+            patch.dict(
+                os.environ,
+                {
+                    "BILLBUDDY_FRONTEND_ORIGINS": production_origin,
+                    "BILLBUDDY_SESSION_SECRET": secret,
+                },
+            ),
+            self.assertRaises(HTTPException) as error,
+        ):
+            main.dashboard_logout(
+                make_request(headers={"origin": production_origin}),
+                main.Response(),
+                billbuddy_session=session,
+            )
+
+        self.assertEqual(error.exception.status_code, 403)
+        self.assertEqual(error.exception.detail, "Missing or invalid CSRF token")
 
 
 if __name__ == "__main__":

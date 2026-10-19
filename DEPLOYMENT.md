@@ -24,6 +24,11 @@ schema is created automatically when the API starts. The existing local
 | `BILLBUDDY_COOKIE_SECURE` | Backend | `true` for HTTPS hosting; `false` only for local HTTP development. |
 | `BILLBUDDY_COOKIE_SAMESITE` | Backend | Use `lax` for the single-origin HTTPS deployment. Do not use `none` as a workaround for cross-site hosting; third-party-cookie restrictions can still block it. |
 
+For the deployed service at `https://billbuddy-api-32rq.onrender.com`, set
+`BILLBUDDY_FRONTEND_ORIGINS` in the Render backend service to exactly
+`https://billbuddy-api-32rq.onrender.com` (no trailing slash). If additional
+origins are needed, list exact origins separated by commas.
+
 The API keys, database URL, dashboard password, and session secret must be
 entered only in backend secret configuration. In particular, `BOLNA_API_KEY`
 must never be set as a frontend build variable. The frontend origin is a public
