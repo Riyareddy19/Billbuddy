@@ -126,6 +126,18 @@ class FrontendServingTests(unittest.TestCase):
         self.assertIn(b"application/json", headers[b"content-type"])
         self.assertEqual(json.loads(body), {"status": "ok"})
 
+    def test_health_check_fails_when_frontend_build_is_missing(self):
+        empty_dir = tempfile.TemporaryDirectory()
+        self.addCleanup(empty_dir.cleanup)
+        with patch.object(main, "FRONTEND_DIST_DIR", Path(empty_dir.name)):
+            status, _, body = asyncio.run(request_app("/health"))
+
+        self.assertEqual(status, 503)
+        self.assertEqual(
+            json.loads(body),
+            {"detail": "Frontend assets are not available"},
+        )
+
     def test_bill_endpoint_keeps_authentication_and_is_not_spa(self):
         with patch.dict(os.environ, {"BILLBUDDY_API_KEY": "local-test-key"}):
             status, _, body = asyncio.run(request_app("/bills"))

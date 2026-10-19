@@ -475,6 +475,11 @@ def home(request: Request):
 
 @app.get("/health")
 def health():
+    if not (FRONTEND_DIST_DIR / "index.html").is_file():
+        raise HTTPException(
+            status_code=503,
+            detail="Frontend assets are not available",
+        )
     return {"status": "ok"}
 
 

@@ -5,6 +5,7 @@ COPY frontend/package.json frontend/package-lock.json ./
 RUN npm ci
 COPY frontend/ ./
 RUN npm run build
+RUN test -s /app/frontend/dist/index.html
 
 FROM python:3.13-slim
 
@@ -17,6 +18,7 @@ RUN pip install --no-cache-dir -r /app/backend/requirements.txt
 
 COPY backend/main.py /app/backend/main.py
 COPY --from=frontend-build /app/frontend/dist /app/frontend/dist
+RUN test -s /app/frontend/dist/index.html
 
 WORKDIR /app/backend
 EXPOSE 10000
