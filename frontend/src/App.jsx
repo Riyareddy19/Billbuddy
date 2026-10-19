@@ -1,8 +1,8 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
+import { BolnaWebCall } from "@bolna/web-call";
 import {
   Activity,
-  ArrowDownRight,
   ArrowUpRight,
   Bell,
   CalendarDays,
@@ -12,10 +12,12 @@ import {
   Clock3,
   CreditCard,
   LayoutDashboard,
+  LoaderCircle,
   LogOut,
   Menu,
   Mic,
   Plus,
+  PhoneOff,
   Search,
   Settings,
   Sparkles,
@@ -41,17 +43,17 @@ const initialBills = [
   { id: 5, name: "Water Bill", category: "Utilities", amount: 450, dueDate: dateString(-5), paid: true },
 ];
 
-const API_BASE =
-  import.meta.env.VITE_API_BASE_URL ||
-  (import.meta.env.DEV ? `http://${window.location.hostname}:8000` : "");
+const API_BASE = import.meta.env.DEV
+  ? `http://${window.location.hostname}:8000`
+  : "";
 
-function apiRequest(path, options = {}) {
-  if (!API_BASE) {
-    throw new Error("VITE_API_BASE_URL must be configured for production.");
-  }
+function apiRequest(path, options = {}, csrfToken = "") {
+  const headers = new Headers(options.headers);
+  if (csrfToken) headers.set("X-BillBuddy-CSRF", csrfToken);
 
   return fetch(`${API_BASE}${path}`, {
     ...options,
+    headers,
     credentials: "include",
   });
 }
@@ -93,6 +95,19 @@ const money = (value) =>
     maximumFractionDigits: 0,
   }).format(value);
 
+function voiceErrorMessage(error) {
+  const messages = {
+    mint_failed: "Could not create a voice session. Check the backend Bolna configuration and try again.",
+    at_capacity: "BillBuddy is busy right now. Please try again in a moment.",
+    microphone_denied: "Allow microphone access in your browser settings, then try again.",
+    connect_failed: "Could not connect to BillBuddy. Check your network and try again.",
+    call_rejected: "The voice call was declined. Please check the agent configuration.",
+    autoplay_blocked: "Your browser blocked call audio. Allow audio playback and try again.",
+    already_active: "A voice call is already in progress.",
+  };
+  return messages[error.code] || error.message || "Could not start the voice call. Please try again.";
+}
+
 function getStatus(bill) {
   if (bill.paid) return "Paid";
   if (bill.dueDate < dateString(0)) return "Overdue";
@@ -124,10 +139,169 @@ function App() {
   const [authChecked, setAuthChecked] = useState(false);
   const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [dashboardPassword, setDashboardPassword] = useState("");
+  const [voiceCapability, setVoiceCapability] = useState(null);
+  const [voicePassword, setVoicePassword] = useState("");
+  const [isAuthorizingVoice, setIsAuthorizingVoice] = useState(false);
+  const [csrfToken, setCsrfToken] = useState("");
   const [authError, setAuthError] = useState("");
   const [isLoggingIn, setIsLoggingIn] = useState(false);
+  const [voiceStatus, setVoiceStatus] = useState("idle");
+  const [voiceError, setVoiceError] = useState("");
+  const callRef = useRef(null);
+  const voiceErrorRef = useRef("");
 
 const initialized = useRef(false);
+
+function reportVoiceFailure(message) {
+  voiceErrorRef.current = message;
+  setVoiceError(message);
+  setVoiceStatus("error");
+}
+
+async function endVoiceCall() {
+  const call = callRef.current;
+  if (!call) return;
+
+  try {
+    await call.stop();
+  } catch (error) {
+    console.error("BillBuddy voice call stop error:", error);
+    reportVoiceFailure("Could not end the voice call cleanly. Please close this page if audio continues.");
+  } finally {
+    if (callRef.current === call) callRef.current = null;
+    if (!voiceErrorRef.current) setVoiceStatus("disconnected");
+  }
+}
+
+async function startVoiceCall() {
+  if (callRef.current) return;
+  if (!voiceCapability || voiceCapability.expiresAt <= Date.now()) {
+    setVoiceCapability(null);
+    reportVoiceFailure("Authorize a new voice call with your dashboard password.");
+    return;
+  }
+
+  voiceErrorRef.current = "";
+  setVoiceError("");
+  setVoiceStatus("connecting");
+
+  const call = new BolnaWebCall({
+    getSession: async () => {
+      const capability = voiceCapability.token;
+      setVoiceCapability(null);
+      const response = await fetch(`${API_BASE}/voice/session`, {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${capability}`,
+          "Content-Type": "application/json",
+        },
+        credentials: "omit",
+      });
+      const session = await response.json();
+      if (!response.ok) {
+        const message =
+          response.status === 401
+            ? "Voice authorization expired or was used. Authorize again to retry."
+            : session.detail || "Could not create a voice session.";
+        reportVoiceFailure(message);
+        throw new Error(message);
+      }
+      return session;
+    },
+  });
+  callRef.current = call;
+
+  call.on("state-change", (state) => {
+    if (callRef.current !== call) return;
+    if (state === "connecting" || state === "ringing") setVoiceStatus("connecting");
+    if (state === "active") setVoiceStatus("connected");
+    if (state === "ended" && !voiceErrorRef.current) setVoiceStatus("disconnected");
+  });
+  call.on("call-start", () => {
+    if (callRef.current === call) setVoiceStatus("connected");
+  });
+  call.on("call-end", () => {
+    if (callRef.current === call) callRef.current = null;
+    if (!voiceErrorRef.current) setVoiceStatus("disconnected");
+  });
+  call.on("error", (error) => {
+    if (!voiceErrorRef.current) reportVoiceFailure(voiceErrorMessage(error));
+  });
+
+  try {
+    await call.start();
+  } catch (error) {
+    if (!voiceErrorRef.current) {
+      reportVoiceFailure(
+        error instanceof Error
+          ? error.message
+          : "Could not start the voice call. Please try again."
+      );
+    }
+    if (callRef.current === call) callRef.current = null;
+    try {
+      await call.stop();
+    } catch (stopError) {
+      console.error("BillBuddy voice call cleanup error:", stopError);
+    }
+  }
+}
+
+async function authorizeVoice(event) {
+  event.preventDefault();
+  setIsAuthorizingVoice(true);
+  setVoiceError("");
+  try {
+    const response = await apiRequest("/auth/login", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ password: voicePassword }),
+    });
+    const result = await response.json();
+    if (!response.ok) {
+      setVoiceError(
+        response.status === 429
+          ? "Too many sign-in attempts. Wait a little and try again."
+          : response.status === 401
+            ? "The dashboard password is incorrect."
+            : result.detail || "Could not authorize voice calling."
+      );
+      return;
+    }
+    setVoiceCapability({
+      token: result.voice_capability,
+      expiresAt: Date.now() + result.voice_capability_expires_in * 1000,
+    });
+    setCsrfToken(result.csrf_token || "");
+    setVoicePassword("");
+    setVoiceStatus("idle");
+    voiceErrorRef.current = "";
+  } catch (error) {
+    console.error("BillBuddy voice authorization error:", error);
+    setVoiceError("Could not authorize voice calling. Check the backend and try again.");
+  } finally {
+    setIsAuthorizingVoice(false);
+  }
+}
+
+useEffect(() => () => {
+  const call = callRef.current;
+  callRef.current = null;
+  if (call) {
+    void call.stop().catch((error) => {
+      console.error("BillBuddy voice call cleanup error:", error);
+    });
+  }
+}, []);
+
+useEffect(() => {
+  if (!voiceCapability) return undefined;
+  const timeout = window.setTimeout(
+    () => setVoiceCapability(null),
+    Math.max(voiceCapability.expiresAt - Date.now(), 0)
+  );
+  return () => window.clearTimeout(timeout);
+}, [voiceCapability]);
 
 useEffect(() => {
   if (initialized.current) return;
@@ -143,6 +317,7 @@ useEffect(() => {
       sessionAuthenticated = session.authenticated;
 
       setIsAuthenticated(sessionAuthenticated);
+      setCsrfToken(sessionAuthenticated ? session.csrf_token || "" : "");
       setAuthChecked(true);
 
       if (sessionAuthenticated) {
@@ -189,8 +364,14 @@ useEffect(() => {
         return;
       }
 
+      const session = await response.json();
       loginCompleted = true;
       setIsAuthenticated(true);
+      setCsrfToken(session.csrf_token || "");
+      setVoiceCapability({
+        token: session.voice_capability,
+        expiresAt: Date.now() + session.voice_capability_expires_in * 1000,
+      });
       setDashboardPassword("");
 
       const serverBills = await loadBills();
@@ -208,10 +389,17 @@ useEffect(() => {
   }
 
   async function logout() {
+    await endVoiceCall();
     try {
-      const response = await apiRequest("/auth/logout", { method: "POST" });
+      const response = await apiRequest(
+        "/auth/logout",
+        { method: "POST" },
+        csrfToken
+      );
       if (!response.ok) throw new Error("Could not sign out");
       setIsAuthenticated(false);
+      setCsrfToken("");
+      setVoiceCapability(null);
       setDashboardPassword("");
     } catch (error) {
       console.error("BillBuddy logout error:", error);
@@ -304,7 +492,8 @@ async function saveBill(event) {
             ? toApi(bill)
             : toApi(bill)
         ),
-      }
+      },
+      csrfToken
     );
 
     if (!response.ok) throw new Error("Failed to save bill");
@@ -336,7 +525,7 @@ async function togglePaid(id) {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ paid: !bill.paid }),
-    });
+    }, csrfToken);
 
     if (!response.ok) throw new Error("Failed to update payment");
 
@@ -358,9 +547,11 @@ async function deleteBill(id) {
   if (!window.confirm("Delete this bill permanently?")) return;
 
   try {
-    const response = await apiRequest(`/bills/${id}`, {
-      method: "DELETE",
-    });
+    const response = await apiRequest(
+      `/bills/${id}`,
+      { method: "DELETE" },
+      csrfToken
+    );
 
     if (!response.ok) throw new Error("Failed to delete bill");
 
@@ -376,6 +567,7 @@ async function deleteBill(id) {
   const nextBill = bills
     .filter((b) => !b.paid && b.dueDate >= dateString(0))
     .sort((a, b) => a.dueDate.localeCompare(b.dueDate))[0];
+  const hasVoiceCapability = Boolean(voiceCapability);
 
   if (!authChecked) {
     return <main className="auth-shell"><p>Connecting to BillBuddy...</p></main>;
@@ -561,8 +753,49 @@ async function deleteBill(id) {
 
           <section className="voice-banner">
             <div className="voice-banner-icon"><Mic size={25} /></div>
-            <div className="voice-banner-copy"><strong>Your bills. Just a conversation away.</strong><span>Voice-powered bill management is the next step in your BillBuddy experience.</span></div>
-            <button className="voice-button" onClick={() => setNotice("Voice assistant integration is our next milestone.")}><Mic size={17} /> Voice assistant <ArrowDownRight size={16} /></button>
+            <div className="voice-banner-copy">
+              <strong>Talk to BillBuddy</strong>
+              <span>Manage your bills naturally with your BillBuddy voice assistant.</span>
+              <span className={`voice-status voice-status-${voiceStatus}`} role="status" aria-live="polite">
+                <span className="voice-status-dot" />
+                {voiceStatus === "connecting" && "Connecting to BillBuddy..."}
+                {voiceStatus === "connected" && "Connected — you can speak now"}
+                {voiceStatus === "disconnected" && "Call ended. Start another conversation anytime."}
+                {voiceStatus === "error" && "Call could not be completed"}
+                {voiceStatus === "idle" && "Ready when you are"}
+              </span>
+              {voiceError && <span className="voice-error" role="alert">{voiceError}</span>}
+            </div>
+            {voiceStatus === "connecting" || voiceStatus === "connected" ? (
+              <button
+                className={`voice-button ${voiceStatus === "connected" ? "voice-button-end" : ""}`}
+                onClick={endVoiceCall}
+              >
+                {voiceStatus === "connecting"
+                  ? <><LoaderCircle className="voice-spinner" size={17} /> Cancel call</>
+                  : <><PhoneOff size={17} /> End call</>}
+              </button>
+            ) : hasVoiceCapability ? (
+              <button className="voice-button" onClick={startVoiceCall}>
+                <Mic size={17} /> Talk to BillBuddy
+              </button>
+            ) : (
+              <form className="voice-authorize-form" onSubmit={authorizeVoice}>
+                <label>
+                  Dashboard password
+                  <input
+                    type="password"
+                    autoComplete="current-password"
+                    required
+                    value={voicePassword}
+                    onChange={(event) => setVoicePassword(event.target.value)}
+                  />
+                </label>
+                <button className="voice-button" type="submit" disabled={isAuthorizingVoice}>
+                  {isAuthorizingVoice ? "Authorizing..." : "Authorize voice"}
+                </button>
+              </form>
+            )}
           </section>
 
           <footer className="footer"><span>© 2026 BillBuddy</span><span>Made for a more organized you <span className="footer-heart">♥</span></span></footer>

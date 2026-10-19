@@ -161,8 +161,23 @@ h1 { font: 800 clamp(22px, 2vw, 29px) 'Manrope', sans-serif; letter-spacing: -1p
 .voice-banner-copy { display: grid; gap: 5px; flex: 1; }
 .voice-banner-copy strong { font: 700 13px 'Manrope',sans-serif; }
 .voice-banner-copy span { font-size: 10px; color: #8985a6; line-height: 1.6; }
+.voice-banner-copy .voice-status { display: flex; align-items: center; gap: 7px; color: #77738f; }
+.voice-status-dot { width: 7px; height: 7px; border-radius: 50%; background: #9a97ae; flex-shrink: 0; }
+.voice-status-connecting .voice-status-dot { background: #d99b45; animation: voice-pulse 1s infinite alternate; }
+.voice-status-connected .voice-status-dot { background: #37a878; box-shadow: 0 0 0 3px #37a87820; }
+.voice-status-error .voice-status-dot { background: #c45b5b; }
+.voice-banner-copy .voice-error { color: #a74343; }
 .voice-button { display: inline-flex; align-items: center; justify-content: center; gap: 7px; border: none; background: var(--purple); color: white; border-radius: 8px; padding: 11px 13px; font-size: 10px; font-weight: 700; white-space: nowrap; }
 .voice-button:hover { background: var(--purple-dark); }
+.voice-button-end { background: #bd4d5a; }
+.voice-button-end:hover { background: #a93e4b; }
+.voice-authorize-form { display: flex; align-items: flex-end; gap: 8px; }
+.voice-authorize-form label { display: grid; gap: 5px; color: #77738f; font-size: 9px; font-weight: 700; }
+.voice-authorize-form input { width: min(190px, 32vw); min-height: 36px; padding: 8px 10px; border: 1px solid #ded9f4; border-radius: 7px; background: white; color: #39374e; font-size: 11px; }
+.voice-authorize-form .voice-button:disabled { cursor: wait; opacity: .65; }
+.voice-spinner { animation: voice-spin 1s linear infinite; }
+@keyframes voice-pulse { to { opacity: .45; } }
+@keyframes voice-spin { to { transform: rotate(360deg); } }
 .footer { display: flex; align-items: center; justify-content: space-between; padding: 22px 0 5px; font-size: 10px; color: #a5a3b6; }
 .footer-heart { color: #d783a7; }
 .toast { position: fixed; right: 24px; bottom: 24px; z-index: 90; display: flex; align-items: center; gap: 10px; max-width: min(420px,calc(100vw - 32px)); padding: 14px 16px; border-radius: 11px; background: #29263f; color: white; box-shadow: 0 8px 32px #29263f25; font-size: 12px; }
@@ -242,7 +257,9 @@ h1 { font: 800 clamp(22px, 2vw, 29px) 'Manrope', sans-serif; letter-spacing: -1p
   .bill-actions { grid-column: 2; grid-row: 2 / span 2; align-self: center; }
   .voice-banner { align-items: flex-start; flex-wrap: wrap; padding: 15px; gap: 11px; }
   .voice-banner-copy { min-width: calc(100% - 60px); }
-  .voice-button { margin-left: 55px; }
+  .voice-button, .voice-authorize-form { margin-left: 55px; }
+  .voice-authorize-form { align-items: stretch; flex-direction: column; width: calc(100% - 55px); }
+  .voice-authorize-form input { width: 100%; }
   .footer { gap: 10px; font-size: 9px; }
   .footer span:last-child { text-align: right; }
   .bill-modal { padding: 21px; }

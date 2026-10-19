@@ -4,8 +4,28 @@ from unittest.mock import patch
 
 from fastapi import HTTPException
 from pydantic import ValidationError
+from starlette.requests import Request
 
 from backend import main
+
+
+def make_request(method="POST", headers=None):
+    scope = {
+        "type": "http",
+        "http_version": "1.1",
+        "method": method,
+        "scheme": "https",
+        "path": "/",
+        "raw_path": b"/",
+        "query_string": b"",
+        "headers": [
+            (name.lower().encode(), value.encode())
+            for name, value in (headers or {}).items()
+        ],
+        "server": ("testserver", 443),
+        "client": ("testclient", 123),
+    }
+    return Request(scope)
 
 
 class FakeCursor:
@@ -95,6 +115,7 @@ class DeleteBillTests(unittest.TestCase):
             with self.subTest(token=token):
                 with self.assertRaises(HTTPException) as error:
                     main.verify_api_key(
+                        request=make_request(),
                         x_billbuddy_token=token,
                         billbuddy_session=None,
                     )
